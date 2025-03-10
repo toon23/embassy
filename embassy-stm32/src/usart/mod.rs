@@ -153,6 +153,30 @@ impl Duplex {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// TX Pin configuration
+pub enum TxPinConfig {
+    /// Push pull allows for faster baudrates, may require series resistor
+    PushPull,
+    /// Open drain output using external pull up resistor
+    OpenDrainExternal,
+    #[cfg(not(gpio_v1))]
+    /// Open drain output using internal pull up resistor
+    OpenDrainInternal,
+}
+
+impl TxPinConfig {
+    fn af_type(self) -> gpio::AfType {
+        match self {
+            TxPinConfig::PushPull => AfType::output(OutputType::PushPull, Speed::Medium),
+            TxPinConfig::OpenDrainExternal => AfType::output(OutputType::OpenDrain, Speed::Medium),
+            #[cfg(not(gpio_v1))]
+            TxPinConfig::OpenDrainInternal => AfType::output_pull(OutputType::OpenDrain, Speed::Medium, Pull::Up),
+        }
+    }
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -208,6 +232,9 @@ pub struct Config {
     /// Set the pull configuration for the RX pin.
     pub rx_pull: Pull,
 
+    /// Set the pin configuration for the TX pin.
+    pub tx_config: TxPinConfig,
+
     // private: set by new_half_duplex, not by the user.
     duplex: Duplex,
 }
@@ -218,13 +245,13 @@ impl Config {
         if self.swap_rx_tx {
             return AfType::input(self.rx_pull);
         };
-        AfType::output(OutputType::PushPull, Speed::Medium)
+        self.tx_config.af_type()
     }
 
     fn rx_af(&self) -> AfType {
         #[cfg(any(usart_v3, usart_v4))]
         if self.swap_rx_tx {
-            return AfType::output(OutputType::PushPull, Speed::Medium);
+            return self.tx_config.af_type();
         };
         AfType::input(self.rx_pull)
     }
@@ -248,31 +275,8 @@ impl Default for Config {
             #[cfg(any(usart_v3, usart_v4))]
             invert_rx: false,
             rx_pull: Pull::None,
+            tx_config: TxPinConfig::PushPull,
             duplex: Duplex::Full,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Half duplex IO mode
-pub enum HalfDuplexConfig {
-    /// Push pull allows for faster baudrates, may require series resistor
-    PushPull,
-    /// Open drain output using external pull up resistor
-    OpenDrainExternal,
-    #[cfg(not(gpio_v1))]
-    /// Open drain output using internal pull up resistor
-    OpenDrainInternal,
-}
-
-impl HalfDuplexConfig {
-    fn af_type(self) -> gpio::AfType {
-        match self {
-            HalfDuplexConfig::PushPull => AfType::output(OutputType::PushPull, Speed::Medium),
-            HalfDuplexConfig::OpenDrainExternal => AfType::output(OutputType::OpenDrain, Speed::Medium),
-            #[cfg(not(gpio_v1))]
-            HalfDuplexConfig::OpenDrainInternal => AfType::output_pull(OutputType::OpenDrain, Speed::Medium, Pull::Up),
         }
     }
 }
@@ -1195,7 +1199,6 @@ impl<'d> Uart<'d, Async> {
         rx_dma: impl Peripheral<P = impl RxDma<T>> + 'd,
         mut config: Config,
         readback: HalfDuplexReadback,
-        half_duplex: HalfDuplexConfig,
     ) -> Result<Self, ConfigError> {
         #[cfg(not(any(usart_v1, usart_v2)))]
         {
@@ -1206,7 +1209,7 @@ impl<'d> Uart<'d, Async> {
         Self::new_inner(
             peri,
             None,
-            new_pin!(tx, half_duplex.af_type()),
+            new_pin!(tx, config.tx_config.af_type()),
             None,
             None,
             None,
@@ -1235,7 +1238,6 @@ impl<'d> Uart<'d, Async> {
         rx_dma: impl Peripheral<P = impl RxDma<T>> + 'd,
         mut config: Config,
         readback: HalfDuplexReadback,
-        half_duplex: HalfDuplexConfig,
     ) -> Result<Self, ConfigError> {
         config.swap_rx_tx = true;
         config.duplex = Duplex::Half(readback);
@@ -1244,7 +1246,7 @@ impl<'d> Uart<'d, Async> {
             peri,
             None,
             None,
-            new_pin!(rx, half_duplex.af_type()),
+            new_pin!(rx, config.tx_config.af_type()),
             None,
             None,
             new_dma!(tx_dma),
@@ -1355,7 +1357,6 @@ impl<'d> Uart<'d, Blocking> {
         tx: impl Peripheral<P = impl TxPin<T>> + 'd,
         mut config: Config,
         readback: HalfDuplexReadback,
-        half_duplex: HalfDuplexConfig,
     ) -> Result<Self, ConfigError> {
         #[cfg(not(any(usart_v1, usart_v2)))]
         {
@@ -1366,7 +1367,7 @@ impl<'d> Uart<'d, Blocking> {
         Self::new_inner(
             peri,
             None,
-            new_pin!(tx, half_duplex.af_type()),
+            new_pin!(tx, config.tx_config.af_type()),
             None,
             None,
             None,
@@ -1392,7 +1393,6 @@ impl<'d> Uart<'d, Blocking> {
         rx: impl Peripheral<P = impl RxPin<T>> + 'd,
         mut config: Config,
         readback: HalfDuplexReadback,
-        half_duplex: HalfDuplexConfig,
     ) -> Result<Self, ConfigError> {
         config.swap_rx_tx = true;
         config.duplex = Duplex::Half(readback);
@@ -1401,7 +1401,7 @@ impl<'d> Uart<'d, Blocking> {
             peri,
             None,
             None,
-            new_pin!(rx, half_duplex.af_type()),
+            new_pin!(rx, config.tx_config.af_type()),
             None,
             None,
             None,
